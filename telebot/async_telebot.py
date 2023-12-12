@@ -58,7 +58,7 @@ class ExceptionHandler:
     """
 
     # noinspection PyMethodMayBeStatic,PyUnusedLocal
-    def handle(self, exception):
+    async def handle(self, exception):
         return False
 
 
@@ -368,6 +368,16 @@ class AsyncTeleBot:
         if logger_level and logger_level >= logging.INFO:
             logger.error("Break infinity polling")
 
+    async def _handle_exception(self, exception: Exception) -> bool:
+        if self.exception_handler is None:
+            return False
+
+        if iscoroutinefunction(self.exception_handler.handle):
+            handled = await self.exception_handler.handle(exception)
+        else:
+            handled = self.exception_handler.handle(exception)  # noqa
+        return handled
+
     async def _process_polling(self, non_stop: bool=False, interval: int=0, timeout: int=20,
             request_timeout: int=None, allowed_updates: Optional[List[str]]=None):
         """
@@ -415,11 +425,7 @@ class AsyncTeleBot:
                 except asyncio.CancelledError:
                     return
                 except asyncio_helper.RequestTimeout as e:
-                    handled = False
-                    if self.exception_handler:
-                        self.exception_handler.handle(e)
-                        handled = True
-
+                    handled = await self._handle_exception(e)
                     if not handled:
                         logger.error('Unhandled exception (full traceback for debug level): %s', str(e))
                         logger.debug(traceback.format_exc())
@@ -430,11 +436,7 @@ class AsyncTeleBot:
                     else:
                         return
                 except asyncio_helper.ApiException as e:
-                    handled = False
-                    if self.exception_handler:
-                        self.exception_handler.handle(e)
-                        handled = True
-
+                    handled = await self._handle_exception(e)
                     if not handled:
                         logger.error('Unhandled exception (full traceback for debug level): %s', str(e))
                         logger.debug(traceback.format_exc())
@@ -444,11 +446,7 @@ class AsyncTeleBot:
                     else:
                         break
                 except Exception as e:
-                    handled = False
-                    if self.exception_handler:
-                        self.exception_handler.handle(e)
-                        handled = True
-
+                    handled = await self._handle_exception(e)
                     if not handled:
                         logger.error('Unhandled exception (full traceback for debug level): %s', str(e))
                         logger.debug(traceback.format_exc())
@@ -545,9 +543,8 @@ class AsyncTeleBot:
                         break
             except Exception as e:
                 handler_error = e
-                if self.exception_handler:
-                    self.exception_handler.handle(e)
-                else:
+                handled = await self._handle_exception(e)
+                if not handled:
                     logger.error(str(e))
                     logger.debug("Exception traceback:\n%s", traceback.format_exc())
 
@@ -2524,8 +2521,8 @@ class AsyncTeleBot:
         :param message_thread_id: Identifier of a message thread, in which the message will be sent
         :type message_thread_id: :obj:`int`
         
-        :return: On success, the sent Message is returned.
-        :rtype: :class:`telebot.types.Message`
+        :return: On success, the MessageId of the sent message is returned.
+        :rtype: :class:`telebot.types.MessageID`
         """
         parse_mode = self.parse_mode if (parse_mode is None) else parse_mode
         disable_notification = self.disable_notification if (disable_notification is None) else disable_notification

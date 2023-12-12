@@ -175,14 +175,16 @@ class TeleBot:
         self.token = token
         self.skip_pending = skip_pending # backward compatibility
         self.last_update_id = last_update_id
-        
-        # propertys
+
+        # properties
         self.suppress_middleware_excepions = suppress_middleware_excepions
         self.parse_mode = parse_mode
         self.disable_web_page_preview = disable_web_page_preview
         self.disable_notification = disable_notification
         self.protect_content = protect_content
         self.allow_sending_without_reply = allow_sending_without_reply
+        self.webhook_listener = None
+        self._user = None
 
         # logs-related
         if colorful_logs:
@@ -269,7 +271,7 @@ class TeleBot:
         :return: Bot's info.
         :rtype: :class:`telebot.types.User`
         """
-        if not hasattr(self, "_user"):
+        if not self._user:
             self._user = self.get_me()
         return self._user
 
@@ -1046,10 +1048,16 @@ class TeleBot:
             self.__non_threaded_polling(non_stop=non_stop, interval=interval, timeout=timeout, long_polling_timeout=long_polling_timeout,
                                         logger_level=logger_level, allowed_updates=allowed_updates)
 
+    def _handle_exception(self, exception: Exception) -> bool:
+        if self.exception_handler is None:
+            return False
+
+        handled = self.exception_handler.handle(exception)
+        return handled
 
     def __threaded_polling(self, non_stop = False, interval = 0, timeout = None, long_polling_timeout = None,
                            logger_level=logging.ERROR, allowed_updates=None):
-        if not(logger_level) or (logger_level < logging.INFO):
+        if (not logger_level) or (logger_level < logging.INFO):
             warning = "\n  Warning: this message appearance will be changed. Set logger_level=logging.INFO to continue seeing it."
         else:
             warning = ""
@@ -1074,10 +1082,7 @@ class TeleBot:
                 self.worker_pool.raise_exceptions()
                 error_interval = 0.25
             except apihelper.ApiException as e:
-                if self.exception_handler is not None:
-                    handled = self.exception_handler.handle(e)
-                else:
-                    handled = False
+                handled = self._handle_exception(e)
                 if not handled:
                     if logger_level and logger_level >= logging.ERROR:
                         logger.error("Threaded polling exception: %s", str(e))
@@ -1107,10 +1112,7 @@ class TeleBot:
                 self.__stop_polling.set()
                 break
             except Exception as e:
-                if self.exception_handler is not None:
-                    handled = self.exception_handler.handle(e)
-                else:
-                    handled = False
+                handled = self._handle_exception(e)
                 if not handled:
                     polling_thread.stop()
                     polling_thread.clear_exceptions()   #*
@@ -1130,7 +1132,7 @@ class TeleBot:
 
     def __non_threaded_polling(self, non_stop=False, interval=0, timeout=None, long_polling_timeout=None,
                                logger_level=logging.ERROR, allowed_updates=None):
-        if not(logger_level) or (logger_level < logging.INFO):
+        if (not logger_level) or (logger_level < logging.INFO):
             warning = "\n  Warning: this message appearance will be changed. Set logger_level=logging.INFO to continue seeing it."
         else:
             warning = ""
@@ -1144,11 +1146,7 @@ class TeleBot:
                 self.__retrieve_updates(timeout, long_polling_timeout, allowed_updates=allowed_updates)
                 error_interval = 0.25
             except apihelper.ApiException as e:
-                if self.exception_handler is not None:
-                    handled = self.exception_handler.handle(e)
-                else:
-                    handled = False
-
+                handled = self._handle_exception(e)
                 if not handled:
                     if logger_level and logger_level >= logging.ERROR:
                         logger.error("Polling exception: %s", str(e))
@@ -1171,10 +1169,7 @@ class TeleBot:
                 self.__stop_polling.set()
                 break
             except Exception as e:
-                if self.exception_handler is not None:
-                    handled = self.exception_handler.handle(e)
-                else:
-                    handled = False
+                handled = self._handle_exception(e)
                 if not handled:
                     raise e
                 else:
@@ -1190,10 +1185,7 @@ class TeleBot:
             try:
                 task(*args, **kwargs)
             except Exception as e:
-                if self.exception_handler is not None:
-                    handled = self.exception_handler.handle(e)
-                else:
-                    handled = False
+                handled = self._handle_exception(e)
                 if not handled:
                     raise e
 
@@ -1517,7 +1509,7 @@ class TeleBot:
         :param disable_notification: Sends the message silently. Users will receive a notification with no sound.
         :type disable_notification: :obj:`bool`
 
-        :param protect_content: If True, the message content will be hidden for all users except for the target user
+        :param protect_content: Protects the contents of the sent message from forwarding and saving
         :type protect_content: :obj:`bool`
 
         :param reply_to_message_id: If the message is a reply, ID of the original message
@@ -1653,8 +1645,8 @@ class TeleBot:
         :param message_thread_id: Identifier of a message thread, in which the message will be sent
         :type message_thread_id: :obj:`int`
         
-        :return: On success, the sent Message is returned.
-        :rtype: :class:`telebot.types.Message`
+        :return: On success, the MessageId of the sent message is returned.
+        :rtype: :class:`telebot.types.MessageID`
         """
         disable_notification = self.disable_notification if (disable_notification is None) else disable_notification
         parse_mode = self.parse_mode if (parse_mode is None) else parse_mode
@@ -1733,7 +1725,7 @@ class TeleBot:
         :param allow_sending_without_reply: Pass True, if the message should be sent even if the specified replied-to message is not found
         :type allow_sending_without_reply: :obj:`bool`
 
-        :param protect_content: Protects the contents of the sent message from forwarding
+        :param protect_content: Protects the contents of the sent message from forwarding and saving
         :type protect_content: :obj:`bool`
 
         :param message_thread_id: Identifier of a message thread, in which the message will be sent
@@ -2086,7 +2078,7 @@ class TeleBot:
         protect_content = self.protect_content if (protect_content is None) else protect_content
         allow_sending_without_reply = self.allow_sending_without_reply if (allow_sending_without_reply is None) else allow_sending_without_reply
 
-        if data and not(document):
+        if data and (not document):
             # function typo miss compatibility
             logger.warning('The parameter "data" is deprecated. Use "document" instead.')
             document = data
@@ -2167,7 +2159,7 @@ class TeleBot:
         protect_content = self.protect_content if (protect_content is None) else protect_content
         allow_sending_without_reply = self.allow_sending_without_reply if (allow_sending_without_reply is None) else allow_sending_without_reply
 
-        if data and not(sticker):
+        if data and (not sticker):
             # function typo miss compatibility
             logger.warning('The parameter "data" is deprecated. Use "sticker" instead.')
             sticker = data
@@ -2275,7 +2267,7 @@ class TeleBot:
         protect_content = self.protect_content if (protect_content is None) else protect_content
         allow_sending_without_reply = self.allow_sending_without_reply if (allow_sending_without_reply is None) else allow_sending_without_reply
 
-        if data and not(video):
+        if data and (not video):
             # function typo miss compatibility
             logger.warning('The parameter "data" is deprecated. Use "video" instead.')
             video = data
@@ -3942,7 +3934,7 @@ class TeleBot:
         :param allow_sending_without_reply: Pass True, if the message should be sent even if one of the specified replied-to messages is not found.
         :type allow_sending_without_reply: :obj:`bool`
 
-        :param protect_content: Pass True, if content of the message needs to be protected from being viewed by the bot.
+        :param protect_content: Protects the contents of the sent message from forwarding and saving
         :type protect_content: :obj:`bool`
 
         :param message_thread_id: The identifier of a message thread, in which the game message will be sent.
@@ -6858,9 +6850,8 @@ class TeleBot:
                         break
             except Exception as e:
                 handler_error = e
-                if self.exception_handler:
-                    self.exception_handler.handle(e)
-                else:
+                handled = self._handle_exception(e)
+                if not handled:
                     logger.error(str(e))
                     logger.debug("Exception traceback:\n%s", traceback.format_exc())
 
@@ -6883,7 +6874,7 @@ class TeleBot:
         :param update_type: handler/update type (Update fields)
         :return:
         """
-        if not(handlers) and not(self.use_class_middlewares):
+        if (not handlers) and (not self.use_class_middlewares):
             return
 
         if self.use_class_middlewares:
