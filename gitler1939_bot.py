@@ -1,6 +1,5 @@
 import telebot
 import random
-import re
 
 words = "бот соси сасать саси сосать".split()
 dogs = "член члены хуй хуи".split()
